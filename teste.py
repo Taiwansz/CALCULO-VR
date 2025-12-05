@@ -1,6 +1,8 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import json
 import os
+import textwrap
 from datetime import datetime, timedelta, date
 from pathlib import Path
 from typing import Dict, Tuple, List
@@ -48,54 +50,30 @@ def contar_dias_uteis(data_inicio: date, data_fim: date) -> int:
     """
     if data_inicio > data_fim:
         return 0
-    
+
     dias_uteis = 0
     data_atual = data_inicio
-    
+
     while data_atual <= data_fim:
         if data_atual.weekday() < 5:  # Segunda a Sexta
             dias_uteis += 1
         data_atual += timedelta(days=1)
-    
+
     return dias_uteis
 
-def calcular_desconto_total(periodos_direito: List[Dict], periodos_afastamento: List[Dict], 
-                           dias_base: int, valor_diario: float) -> Dict:
+def calcular_saldo_final(abatimentos: List[Dict], direitos: List[Dict]) -> Dict:
     """
-    Calcula o desconto total baseado em múltiplos períodos.
-    
-    Args:
-        periodos_direito: Lista de dicts com {mes, valor, dias}
-        periodos_afastamento: Lista de dicts com {descricao, data_inicio, data_fim, dias}
-        dias_base: Dias base da empresa
-        valor_diario: Valor diário da empresa
-    
-    Returns:
-        Dict com os totais calculados
+    Calcula o saldo final entre direitos e abatimentos.
     """
-    total_dias_direito = sum(p['dias'] for p in periodos_direito)
-    total_valor_direito = sum(p['valor'] for p in periodos_direito)
-    total_dias_ausentes = sum(p['dias'] for p in periodos_afastamento)
-    
-    dias_trabalhados = total_dias_direito - total_dias_ausentes
-    
-    if dias_trabalhados >= dias_base:
-        dias_a_descontar = 0
-    else:
-        dias_a_descontar = dias_base - dias_trabalhados
-    
-    dias_a_descontar = max(0, dias_a_descontar)
-    valor_a_descontar = dias_a_descontar * valor_diario
-    valor_final = total_valor_direito - valor_a_descontar
-    
+    total_valor_abatimentos = sum(p['valor'] for p in abatimentos)
+    total_valor_direitos = sum(p['valor'] for p in direitos)
+
+    saldo_final = total_valor_direitos - total_valor_abatimentos
+
     return {
-        'total_dias_direito': total_dias_direito,
-        'total_valor_direito': total_valor_direito,
-        'total_dias_ausentes': total_dias_ausentes,
-        'dias_trabalhados': dias_trabalhados,
-        'dias_a_descontar': dias_a_descontar,
-        'valor_a_descontar': valor_a_descontar,
-        'valor_final': valor_final
+        'total_valor_abatimentos': total_valor_abatimentos,
+        'total_valor_direitos': total_valor_direitos,
+        'saldo_final': saldo_final
     }
 
 def formatar_real(valor: float) -> str:
@@ -108,203 +86,170 @@ def formatar_real(valor: float) -> str:
 
 def gerar_html_relatorio(calculos: list) -> str:
     """Gera o relatório completo em HTML."""
-    
-    html_completo = """
+
+    # CSS e Cabeçalho
+    html = """
     <!DOCTYPE html>
     <html lang="pt-BR">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Relatório de Descontos</title>
+        <title>Relatório de Acerto Financeiro</title>
         <style>
             body {
-                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                font-family: 'Arial', sans-serif;
                 max-width: 900px;
-                margin: 40px auto;
-                padding: 20px;
-                background: #f5f5f5;
+                margin: 20px auto;
+                background: #fff;
+                color: #333;
             }
             .relatorio {
-                background: white;
-                padding: 30px;
-                margin-bottom: 30px;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-            }
-            .cabecalho {
-                background: #2c3e50;
-                color: white;
-                padding: 15px;
-                margin: -30px -30px 20px -30px;
-                text-align: center;
-            }
-            .secao-titulo {
-                background: #34495e;
-                color: white;
-                padding: 10px 15px;
-                margin: 20px 0 15px 0;
-                font-weight: bold;
+                margin-bottom: 50px;
+                border: 1px solid #ccc;
+                background: #fff;
             }
             table {
                 width: 100%;
                 border-collapse: collapse;
-                margin-bottom: 15px;
+                margin: 0;
             }
-            td, th {
-                padding: 8px;
-                border-bottom: 1px solid #ecf0f1;
+            th, td {
+                border: 1px solid #000;
+                padding: 5px 10px;
+                font-size: 14px;
+            }
+            .header-abatidos {
+                background-color: red;
+                color: white;
+                text-align: center;
+                font-weight: bold;
+                text-transform: uppercase;
+                padding: 5px;
+            }
+            .header-direitos {
+                background-color: #002060; /* Dark blue */
+                color: white;
+                text-align: center;
+                font-weight: bold;
+                text-transform: uppercase;
+                padding: 5px;
+            }
+            .valor-col {
+                text-align: right;
+                width: 120px;
+                white-space: nowrap;
+            }
+            .desc-col {
                 text-align: left;
             }
-            .valor {
+            .detalhe-col {
+                text-align: center;
+            }
+            .subtotal-row td {
                 text-align: right;
                 font-weight: bold;
+                color: red;
             }
-            .total {
-                background: #e74c3c;
-                color: white;
-                padding: 12px 15px;
+            .subtotal-row-direito td {
                 text-align: right;
                 font-weight: bold;
-                font-size: 1.1em;
-                margin: 15px 0;
+                color: #000;
             }
-            .total-direito {
-                background: #27ae60;
-                color: white;
-                padding: 12px 15px;
+            .saldo-final-row td {
                 text-align: right;
                 font-weight: bold;
-                font-size: 1.1em;
-                margin: 15px 0;
+                background-color: #f9f9f9;
             }
-            .observacao {
-                background: #ecf0f1;
-                padding: 15px;
-                margin: 15px 0;
-                font-style: italic;
-                color: #555;
-            }
-            .info-reembolso {
-                background: #3498db;
-                color: white;
-                padding: 12px 15px;
-                margin: 15px 0;
-            }
-            .resumo-item {
+            .info-header {
                 padding: 10px;
-                background: #f8f9fa;
-                margin-bottom: 8px;
-                border-left: 4px solid #3498db;
+                background: #eee;
+                border-bottom: 1px solid #ccc;
             }
         </style>
     </head>
     <body>
     """
-    
+
     for calc in calculos:
-        html_completo += f"""
+        html += f"""
         <div class="relatorio">
-            <div class="cabecalho">
-                <h2>{calc['nome_funcionario'].upper()}</h2>
-                <p style="margin: 5px 0 0 0;">Empresa: {calc['empresa']}</p>
+            <div class="info-header">
+                <strong>Funcionário:</strong> {calc['nome_funcionario'].upper()}<br>
+                <strong>Empresa:</strong> {calc['empresa']}
             </div>
-        """
-        
-        # Seção de DESCONTOS
-        html_completo += """
-            <div class="secao-titulo">PERÍODOS DE AFASTAMENTO</div>
+
             <table>
+                <!-- ABATIMENTOS -->
                 <thead>
                     <tr>
-                        <th>Descrição/Período</th>
-                        <th style="text-align: center;">Dias</th>
-                        <th style="text-align: right;">Valor Diário</th>
+                        <th colspan="3" class="header-abatidos">VALORES COMPRADOS A SEREM ABATIDOS</th>
                     </tr>
                 </thead>
                 <tbody>
         """
-        
-        for periodo in calc['periodos_afastamento']:
-            descricao = periodo['descricao']
-            if periodo.get('data_inicio') and periodo.get('data_fim'):
-                descricao += f" ({periodo['data_inicio']} a {periodo['data_fim']})"
-            
-            html_completo += f"""
+
+        for item in calc['abatimentos']:
+            html += f"""
                 <tr>
-                    <td>{descricao}</td>
-                    <td style="text-align: center;">{periodo['dias']} dias</td>
-                    <td class="valor">{formatar_real(calc['valor_diario'])}</td>
+                    <td class="desc-col">{item['descricao']}</td>
+                    <td class="detalhe-col">{item['detalhes']}</td>
+                    <td class="valor-col" style="color: red;">{formatar_real(item['valor'])}</td>
                 </tr>
             """
-        
-        html_completo += "</tbody></table>"
-        
-        if calc.get('observacao'):
-            html_completo += f"""
-                <div class="observacao">
-                    <strong>Observação:</strong> {calc['observacao']}
-                </div>
-            """
-        
-        html_completo += f"""
-            <div class="total">
-                SUBTOTAL DE DESCONTO: {calc['totais']['total_dias_ausentes']} dias = {formatar_real(calc['totais']['valor_a_descontar'])}
-            </div>
-        """
-        
-        # Seção VALORES QUE TEM DIREITO
-        html_completo += """
-            <div class="secao-titulo">VALORES QUE TEM DIREITO</div>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Mês/Período</th>
-                        <th style="text-align: center;">Dias</th>
-                        <th style="text-align: right;">Valor</th>
-                    </tr>
-                </thead>
-                <tbody>
-        """
-        
-        for periodo in calc['periodos_direito']:
-            html_completo += f"""
-                <tr>
-                    <td>{periodo['mes']}</td>
-                    <td style="text-align: center;">{periodo['dias']} dias</td>
-                    <td class="valor">{formatar_real(periodo['valor'])}</td>
+
+        html += f"""
+                <tr class="subtotal-row">
+                    <td colspan="2"></td>
+                    <td class="valor-col">{formatar_real(calc['totais']['total_valor_abatimentos'])}</td>
                 </tr>
-            """
-        
-        html_completo += f"""
                 </tbody>
             </table>
-            
-            <div class="total-direito">
-                Total de direito: {formatar_real(calc['totais']['total_valor_direito'])}
-            </div>
-            
-            <div class="info-reembolso">
-                <strong>Valor de direito abatendo o valor descontado:</strong> {formatar_real(calc['totais']['valor_final'])}<br>
-                <strong>Data de reembolso:</strong> {calc.get('data_reembolso', date.today().strftime('%d/%m/%Y'))}
-            </div>
-            
-            <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-left: 4px solid #2c3e50;">
-                <strong>Resumo do Cálculo:</strong><br>
-                • Total de dias de direito: {calc['totais']['total_dias_direito']} dias<br>
-                • Total de dias ausentes: {calc['totais']['total_dias_ausentes']} dias<br>
-                • Dias trabalhados: {calc['totais']['dias_trabalhados']} dias<br>
-                • Dias-base da empresa: {calc['dias_base']} dias<br>
-                • Dias a descontar: {calc['totais']['dias_a_descontar']} dias<br>
-                • Valor diário: {formatar_real(calc['valor_diario'])}
-            </div>
+
+            <table>
+                <!-- DIREITOS -->
+                <thead>
+                    <tr>
+                        <th colspan="3" class="header-direitos">VALORES QUE TEM DIREITO</th>
+                    </tr>
+                </thead>
+                <tbody>
+        """
+
+        for item in calc['direitos']:
+            html += f"""
+                <tr>
+                    <td class="desc-col">{item['descricao']}</td>
+                    <td class="detalhe-col">{item['dias']} dias de trabalho</td>
+                    <td class="valor-col">{formatar_real(item['valor'])}</td>
+                </tr>
+            """
+
+        html += f"""
+                <tr class="subtotal-row-direito">
+                    <td colspan="2"></td>
+                    <td class="valor-col">{formatar_real(calc['totais']['total_valor_direitos'])}</td>
+                </tr>
+                <tr class="saldo-final-row">
+                    <td colspan="2">Valor de direito abatendo o valor pago a maior</td>
+                    <td class="valor-col">{formatar_real(calc['totais']['saldo_final'])}</td>
+                </tr>
+                <tr>
+                    <td colspan="2" style="text-align: right;">Data de reembolso na conta bancária</td>
+                    <td class="valor-col">{calc.get('data_reembolso', '')}</td>
+                </tr>
+                </tbody>
+            </table>
+
+            {f'<div style="padding: 10px; font-style: italic;">Obs: {calc["observacao"]}</div>' if calc.get('observacao') else ''}
         </div>
         """
-    
-    html_completo += """
+
+    html += """
     </body>
     </html>
     """
-    
-    return html_completo
+
+    return textwrap.dedent(html)
 
 # ============================================================================
 # INTERFACE
@@ -313,31 +258,31 @@ def gerar_html_relatorio(calculos: list) -> str:
 def renderizar_cadastro_empresas(empresas: Dict):
     """Renderiza a seção de cadastro de empresas."""
     st.subheader("Cadastro de Empresas")
-    
+
     with st.form("form_empresa"):
         col1, col2, col3 = st.columns(3)
-        
+
         with col1:
             nome_empresa = st.text_input("Nome da Empresa", placeholder="Ex: Empresa X")
         with col2:
-            valor_diario = st.number_input("Valor Diário (R$)", 
-                                          min_value=0.0, 
-                                          value=79.24, 
+            valor_diario = st.number_input("Valor Diário (R$)",
+                                          min_value=0.0,
+                                          value=79.24,
                                           step=0.01,
                                           format="%.2f")
         with col3:
-            dias_base = st.number_input("Dias-Base", 
-                                       min_value=1, 
-                                       value=21, 
+            dias_base = st.number_input("Dias-Base (Apenas referência)",
+                                       min_value=1,
+                                       value=21,
                                        step=1)
-        
+
         col_save, col_del = st.columns([1, 1])
-        
+
         with col_save:
             submit = st.form_submit_button("Salvar/Atualizar", use_container_width=True)
         with col_del:
             delete = st.form_submit_button("Excluir", use_container_width=True, type="secondary")
-        
+
         if submit:
             if not nome_empresa.strip():
                 st.error("Nome da empresa é obrigatório")
@@ -349,263 +294,212 @@ def renderizar_cadastro_empresas(empresas: Dict):
                 if salvar_empresas(empresas):
                     st.success(f"Empresa '{nome_empresa}' salva com sucesso")
                     st.rerun()
-        
+
         if delete:
             if nome_empresa in empresas:
                 del empresas[nome_empresa]
                 salvar_empresas(empresas)
                 st.success(f"Empresa '{nome_empresa}' removida")
                 st.rerun()
-    
+
     if empresas:
         st.write("**Empresas cadastradas:**")
         for nome, dados in empresas.items():
-            st.text(f"• {nome} — {formatar_real(dados['valor_diario'])}/dia — Base: {dados['dias_base']} dias")
+            st.text(f"• {nome} — {formatar_real(dados['valor_diario'])}/dia")
 
 def renderizar_calculo_individual(empresas: Dict):
     """Renderiza a seção de cálculo individual."""
     st.subheader("Cálculo Individual")
-    
+
     if not empresas:
         st.warning("Cadastre pelo menos uma empresa antes de fazer cálculos")
         return
-    
+
     # Inicializar listas no session_state
-    if 'periodos_direito_temp' not in st.session_state:
-        st.session_state.periodos_direito_temp = []
-    if 'periodos_afastamento_temp' not in st.session_state:
-        st.session_state.periodos_afastamento_temp = []
-    
+    if 'abatimentos_temp' not in st.session_state:
+        st.session_state.abatimentos_temp = []
+    if 'direitos_temp' not in st.session_state:
+        st.session_state.direitos_temp = []
+
     col1, col2 = st.columns(2)
-    
+
     with col1:
         nome_funcionario = st.text_input("Nome do Funcionário", placeholder="Ex: João Silva")
-    
+
     with col2:
         empresa_selecionada = st.selectbox("Empresa", options=list(empresas.keys()))
-    
+
     if empresa_selecionada:
         dados_empresa = empresas[empresa_selecionada]
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.info(f"Valor Diário: {formatar_real(dados_empresa['valor_diario'])}")
-        with col2:
-            st.info(f"Dias-Base: {dados_empresa['dias_base']} dias")
-        
-        # ===== SEÇÃO: PERÍODOS DE DIREITO =====
+        valor_diario = dados_empresa['valor_diario']
+
+        st.info(f"Usando Valor Diário: {formatar_real(valor_diario)}")
+
+        # ===== SEÇÃO 1: ABATIMENTOS (VERMELHO) =====
         st.markdown("---")
-        st.subheader("Períodos de Direito")
-        
-        with st.form("form_periodo_direito", clear_on_submit=True):
-            col1, col2, col3 = st.columns([2, 1, 1])
-            
-            with col1:
-                mes_direito = st.text_input("Mês/Período", placeholder="Ex: Novembro/2024")
-            
-            with col2:
-                metodo_calc_direito = st.selectbox("Cálculo", ["Manual", "Por Data"])
-            
-            with col3:
-                if metodo_calc_direito == "Manual":
-                    dias_direito = st.number_input("Dias", min_value=0, value=21, step=1, key="dias_dir_manual")
-                    valor_direito = st.number_input("Valor (R$)", min_value=0.0, value=100.0, step=10.0, key="valor_dir")
-                    data_inicio_dir = None
-                    data_fim_dir = None
-                else:
-                    col_d1, col_d2 = st.columns(2)
-                    with col_d1:
-                        data_inicio_dir = st.date_input("Data Início", key="data_inicio_dir")
-                    with col_d2:
-                        data_fim_dir = st.date_input("Data Fim", key="data_fim_dir")
-                    
-                    if data_inicio_dir and data_fim_dir:
-                        dias_direito = contar_dias_uteis(data_inicio_dir, data_fim_dir)
-                        valor_direito = dias_direito * dados_empresa['valor_diario']
-                        st.info(f"Dias: {dias_direito} | Valor: {formatar_real(valor_direito)}")
+        st.markdown("<h3 style='color: red;'>1. Valores Comprados a Serem Abatidos</h3>", unsafe_allow_html=True)
+
+        with st.expander("Adicionar Item de Abatimento", expanded=True):
+            with st.form("form_abatimento", clear_on_submit=True):
+                col_ab1, col_ab2, col_ab3 = st.columns([2, 1, 1])
+                with col_ab1:
+                    desc_abatimento = st.text_input("Descrição", placeholder="Ex: Descontar Referente a Julho")
+                with col_ab2:
+                    dias_trab_abat = st.number_input("Dias Atuou/Trabalhou", min_value=0, value=0, step=1, help="Dias que a pessoa trabalhou neste período")
+                with col_ab3:
+                    dias_afast_abat = st.number_input("Dias a Abater/Afastamento", min_value=0, value=0, step=1, help="Dias que serão descontados")
+
+                submitted_abat = st.form_submit_button("Adicionar Abatimento")
+
+                if submitted_abat:
+                    if desc_abatimento:
+                        # Lógica do detalhe
+                        if dias_trab_abat > 0:
+                            detalhe = f"Atuou {dias_trab_abat} dias - sendo abatido o restante ({dias_afast_abat} dias)"
+                        else:
+                            detalhe = f"Não atuou nenhum dia - sendo abatido todo o valor ({dias_afast_abat} dias)"
+
+                        item = {
+                            'descricao': desc_abatimento,
+                            'dias_trabalhados': dias_trab_abat,
+                            'dias_afastamento': dias_afast_abat,
+                            'detalhes': detalhe,
+                            'valor': dias_afast_abat * valor_diario
+                        }
+                        st.session_state.abatimentos_temp.append(item)
+                        st.success("Item adicionado!")
+                        st.rerun()
                     else:
-                        dias_direito = 0
-                        valor_direito = 0.0
-            
-            if st.form_submit_button("Adicionar Período de Direito", use_container_width=True):
-                if mes_direito and dias_direito > 0:
-                    periodo = {
-                        'mes': mes_direito,
-                        'dias': dias_direito,
-                        'valor': valor_direito,
-                        'data_inicio': str(data_inicio_dir) if data_inicio_dir else None,
-                        'data_fim': str(data_fim_dir) if data_fim_dir else None
-                    }
-                    st.session_state.periodos_direito_temp.append(periodo)
-                    st.success(f"Período '{mes_direito}' adicionado")
-                    st.rerun()
-        
-        # Exibir períodos de direito adicionados
-        if st.session_state.periodos_direito_temp:
-            st.write("**Períodos de Direito Adicionados:**")
-            for idx, p in enumerate(st.session_state.periodos_direito_temp):
-                col1, col2 = st.columns([5, 1])
-                with col1:
-                    st.text(f"• {p['mes']} — {p['dias']} dias — {formatar_real(p['valor'])}")
-                with col2:
-                    if st.button("Remover", key=f"rem_dir_{idx}"):
-                        st.session_state.periodos_direito_temp.pop(idx)
-                        st.rerun()
-        
-        # ===== SEÇÃO: PERÍODOS DE AFASTAMENTO =====
+                        st.error("Preencha a descrição")
+
+        if st.session_state.abatimentos_temp:
+            st.table(st.session_state.abatimentos_temp)
+            if st.button("Limpar Abatimentos"):
+                st.session_state.abatimentos_temp = []
+                st.rerun()
+
+        # ===== SEÇÃO 2: DIREITOS (AZUL) =====
         st.markdown("---")
-        st.subheader("Períodos de Afastamento (Atestados/Faltas)")
-        
-        with st.form("form_periodo_afastamento", clear_on_submit=True):
-            col1, col2 = st.columns([3, 1])
-            
-            with col1:
-                descricao_afastamento = st.text_input("Descrição", placeholder="Ex: Atestado médico")
-            
-            with col2:
-                metodo_calc_afastamento = st.selectbox("Cálculo", ["Manual", "Por Data"], key="metodo_afas")
-            
-            if metodo_calc_afastamento == "Manual":
-                dias_afastamento = st.number_input("Dias de Afastamento", min_value=0, value=1, step=1, key="dias_afas_manual")
-                data_inicio_afas = None
-                data_fim_afas = None
-            else:
-                col_a1, col_a2 = st.columns(2)
-                with col_a1:
-                    data_inicio_afas = st.date_input("Data Início", key="data_inicio_afas")
-                with col_a2:
-                    data_fim_afas = st.date_input("Data Fim", key="data_fim_afas")
-                
-                if data_inicio_afas and data_fim_afas:
-                    dias_afastamento = contar_dias_uteis(data_inicio_afas, data_fim_afas)
-                    st.info(f"Dias calculados: {dias_afastamento}")
-                else:
-                    dias_afastamento = 0
-            
-            if st.form_submit_button("Adicionar Período de Afastamento", use_container_width=True):
-                if descricao_afastamento and dias_afastamento > 0:
-                    periodo = {
-                        'descricao': descricao_afastamento,
-                        'dias': dias_afastamento,
-                        'data_inicio': str(data_inicio_afas) if data_inicio_afas else None,
-                        'data_fim': str(data_fim_afas) if data_fim_afas else None
-                    }
-                    st.session_state.periodos_afastamento_temp.append(periodo)
-                    st.success(f"Afastamento '{descricao_afastamento}' adicionado")
-                    st.rerun()
-        
-        # Exibir períodos de afastamento adicionados
-        if st.session_state.periodos_afastamento_temp:
-            st.write("**Períodos de Afastamento Adicionados:**")
-            for idx, p in enumerate(st.session_state.periodos_afastamento_temp):
-                col1, col2 = st.columns([5, 1])
-                with col1:
-                    periodo_txt = f"• {p['descricao']} — {p['dias']} dias"
-                    if p.get('data_inicio') and p.get('data_fim'):
-                        periodo_txt += f" ({p['data_inicio']} a {p['data_fim']})"
-                    st.text(periodo_txt)
-                with col2:
-                    if st.button("Remover", key=f"rem_afas_{idx}"):
-                        st.session_state.periodos_afastamento_temp.pop(idx)
+        st.markdown("<h3 style='color: blue;'>2. Valores que Tem Direito</h3>", unsafe_allow_html=True)
+
+        with st.expander("Adicionar Item de Direito", expanded=True):
+            with st.form("form_direito", clear_on_submit=True):
+                col_dir1, col_dir2, col_dir3 = st.columns([2, 1, 1])
+                with col_dir1:
+                    desc_direito = st.text_input("Mês/Período", placeholder="Ex: Outubro")
+                with col_dir2:
+                    dias_direito = st.number_input("Dias de Trabalho", min_value=0, value=21, step=1)
+
+                submitted_dir = st.form_submit_button("Adicionar Direito")
+
+                if submitted_dir:
+                    if desc_direito and dias_direito > 0:
+                        item = {
+                            'descricao': desc_direito,
+                            'dias': dias_direito,
+                            'valor': dias_direito * valor_diario
+                        }
+                        st.session_state.direitos_temp.append(item)
+                        st.success("Item adicionado!")
                         st.rerun()
-        
-        # ===== OBSERVAÇÃO E FINALIZAÇÃO =====
+                    else:
+                        st.error("Preencha a descrição e dias")
+
+        if st.session_state.direitos_temp:
+            st.table(st.session_state.direitos_temp)
+            if st.button("Limpar Direitos"):
+                st.session_state.direitos_temp = []
+                st.rerun()
+
+        # ===== RESULTADO E DATA =====
         st.markdown("---")
-        observacao = st.text_area("Observação (opcional)")
-        data_reembolso = st.date_input("Data de Reembolso", value=date.today())
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if st.button("Calcular", type="primary", use_container_width=True):
-                if not nome_funcionario.strip():
-                    st.error("Nome do funcionário é obrigatório")
-                elif not st.session_state.periodos_direito_temp:
-                    st.error("Adicione pelo menos um período de direito")
-                elif not st.session_state.periodos_afastamento_temp:
-                    st.error("Adicione pelo menos um período de afastamento")
+        st.subheader("Finalização")
+
+        col_res1, col_res2 = st.columns(2)
+        with col_res1:
+            observacao = st.text_area("Observação (opcional)")
+        with col_res2:
+            data_reembolso = st.date_input("Data de Reembolso na Conta", value=date.today())
+
+        col_act1, col_act2, col_act3 = st.columns(3)
+
+        with col_act1:
+            if st.button("Calcular Saldo", type="primary", use_container_width=True):
+                if not nome_funcionario:
+                    st.error("Preencha o nome do funcionário")
                 else:
-                    totais = calcular_desconto_total(
-                        st.session_state.periodos_direito_temp,
-                        st.session_state.periodos_afastamento_temp,
-                        dados_empresa['dias_base'],
-                        dados_empresa['valor_diario']
+                    totais = calcular_saldo_final(
+                        st.session_state.abatimentos_temp,
+                        st.session_state.direitos_temp
                     )
-                    
+
                     st.session_state._ultimo_calculo = {
                         'nome_funcionario': nome_funcionario,
                         'empresa': empresa_selecionada,
-                        'valor_diario': dados_empresa['valor_diario'],
-                        'dias_base': dados_empresa['dias_base'],
-                        'periodos_direito': st.session_state.periodos_direito_temp.copy(),
-                        'periodos_afastamento': st.session_state.periodos_afastamento_temp.copy(),
+                        'valor_diario': valor_diario,
+                        'abatimentos': st.session_state.abatimentos_temp.copy(),
+                        'direitos': st.session_state.direitos_temp.copy(),
                         'totais': totais,
                         'observacao': observacao,
                         'data_reembolso': data_reembolso.strftime('%d/%m/%Y')
                     }
-                    
-                    st.success("Cálculo realizado com sucesso")
-        
-        with col2:
-            if st.button("Adicionar ao Relatório", use_container_width=True):
-                if '_ultimo_calculo' not in st.session_state:
-                    st.warning("Calcule primeiro antes de adicionar")
-                else:
+                    st.success("Calculado!")
+
+        with col_act2:
+            if st.button("Adicionar ao Relatório Final", use_container_width=True):
+                if '_ultimo_calculo' in st.session_state:
                     if 'calculos' not in st.session_state:
                         st.session_state.calculos = []
                     st.session_state.calculos.append(st.session_state._ultimo_calculo)
-                    st.session_state.periodos_direito_temp = []
-                    st.session_state.periodos_afastamento_temp = []
-                    st.success("Adicionado ao relatório")
+
+                    # Limpar temporários
+                    st.session_state.abatimentos_temp = []
+                    st.session_state.direitos_temp = []
+                    del st.session_state._ultimo_calculo
+
+                    st.success("Adicionado ao relatório!")
                     st.rerun()
-        
-        with col3:
-            if st.button("Limpar Tudo", use_container_width=True):
-                st.session_state.periodos_direito_temp = []
-                st.session_state.periodos_afastamento_temp = []
+                else:
+                    st.warning("Calcule primeiro.")
+
+        with col_act3:
+             if st.button("Resetar Tudo", use_container_width=True):
+                st.session_state.abatimentos_temp = []
+                st.session_state.direitos_temp = []
                 st.session_state.calculos = []
                 if '_ultimo_calculo' in st.session_state:
                     del st.session_state._ultimo_calculo
-                st.success("Tudo limpo")
                 st.rerun()
-        
-        # Exibir resultado do último cálculo
+
+        # Mostrar resumo do cálculo atual
         if '_ultimo_calculo' in st.session_state:
-            st.markdown("---")
-            st.subheader("Resultado do Cálculo")
-            calc = st.session_state._ultimo_calculo
-            totais = calc['totais']
-            
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Dias de Direito", totais['total_dias_direito'])
-            with col2:
-                st.metric("Dias Ausentes", totais['total_dias_ausentes'])
-            with col3:
-                st.metric("Dias a Descontar", totais['dias_a_descontar'])
-            with col4:
-                st.metric("Valor Final", formatar_real(totais['valor_final']))
+            res = st.session_state._ultimo_calculo['totais']
+            st.metric("Saldo Final (Direitos - Abatimentos)", formatar_real(res['saldo_final']),
+                      delta=formatar_real(res['total_valor_direitos']) + " (Créditos)",
+                      delta_color="normal")
+            st.caption(f"Abatimentos: {formatar_real(res['total_valor_abatimentos'])}")
 
 def gerar_relatorio():
     """Gera e exibe o relatório final."""
     st.subheader("Relatório Final")
-    
+
     if 'calculos' not in st.session_state or not st.session_state.calculos:
         st.info("Nenhum cálculo adicionado ao relatório")
         return
-    
+
     html_relatorio = gerar_html_relatorio(st.session_state.calculos)
-    
-    st.markdown(html_relatorio, unsafe_allow_html=True)
-    
+
+    # Exibir usando componente HTML isolado para garantir renderização correta
+    components.html(html_relatorio, height=600, scrolling=True)
+
     arquivo_html = Path("relatorio_descontos.html")
     arquivo_html.write_text(html_relatorio, encoding='utf-8')
-    
+
     with open(arquivo_html, 'rb') as f:
         st.download_button(
             label="Baixar Relatório (HTML)",
             data=f,
-            file_name=f"relatorio_descontos_{date.today().strftime('%Y%m%d')}.html",
+            file_name=f"relatorio_acerto_{date.today().strftime('%Y%m%d')}.html",
             mime="text/html",
             use_container_width=True
         )
@@ -616,15 +510,15 @@ def gerar_relatorio():
 
 def main():
     st.set_page_config(
-        page_title="Cálculo de Descontos",
-        page_icon="📊",
+        page_title="Cálculo de Acertos",
+        page_icon="💰",
         layout="wide"
     )
-    
-    st.title("Sistema de Cálculo de Descontos")
-    
+
+    st.title("Sistema de Cálculo de Acertos/Descontos")
+
     empresas = carregar_empresas()
-    
+
     with st.sidebar:
         st.header("Menu")
         opcao = st.radio(
@@ -632,10 +526,10 @@ def main():
             ["Cadastro de Empresas", "Cálculo Individual", "Relatório Final"],
             label_visibility="collapsed"
         )
-        
+
         st.markdown("---")
-        st.caption("Sistema de cálculo de descontos por ausência")
-    
+        st.caption("v2.1 - Acertos e Abatimentos")
+
     if opcao == "Cadastro de Empresas":
         renderizar_cadastro_empresas(empresas)
     elif opcao == "Cálculo Individual":
